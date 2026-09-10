@@ -102,7 +102,13 @@ namespace revit_mcp_plugin.Core
             try
             {
                 _isRunning = true;
-                _listener = new TcpListener(IPAddress.Any, _port);
+                // Bind to loopback only. The MCP server always connects via "localhost" (see
+                // server/src/utils/ConnectionManager.ts), so this does not change legitimate
+                // behavior. Binding to IPAddress.Any previously exposed this port - which accepts
+                // unauthenticated JSON-RPC commands including arbitrary C# execution via
+                // send_code_to_revit - to every network interface on the machine (LAN, VPN/mesh
+                // interfaces such as Tailscale, etc.), not just the local Claude/MCP client.
+                _listener = new TcpListener(IPAddress.Loopback, _port);
                 _listener.Start();
 
                 _listenerThread = new Thread(ListenForClients)
