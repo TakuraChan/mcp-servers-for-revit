@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -25,6 +25,9 @@ namespace revit_mcp_plugin.Core
         private ICommandRegistry _commandRegistry;
         private ILogger _logger;
         private CommandExecutor _commandExecutor;
+        private int _activeClients;
+        private long _requestCount;
+        private DateTime _lastActivityUtc = DateTime.MinValue;
 
         public static SocketService Instance
         {
@@ -43,6 +46,39 @@ namespace revit_mcp_plugin.Core
         }
 
         public bool IsRunning => _isRunning;
+
+        /// <summary>Number of MCP clients currently attached to the listener.</summary>
+        public int ActiveClients => Volatile.Read(ref _activeClients);
+
+        /// <summary>Total JSON-RPC requests handled since the listener started.</summary>
+        public long RequestCount => Interlocked.Read(ref _requestCount);
+
+        /// <summary>UTC time of the most recent request, or DateTime.MinValue if none.</summary>
+        public DateTime LastActivityUtc => _lastActivityUtc;
+
+        /// <summary>True once Initialize has run against a UIApplication.</summary>
+        public bool IsInitialized => _uiApp != null;
+
+        /// <summary>How many commands the registry loaded.</summary>
+        public int RegisteredCommandCount
+        {
+            get
+            {
+                try
+                {
+                    var registry = _commandRegistry as RevitCommandRegistry;
+                    if (registry == null) return 0;
+
+                    int count = 0;
+                    foreach (var name in registry.GetRegisteredCommands()) count++;
+                    return count;
+                }
+                catch
+                {
+                    return 0;
+                }
+            }
+        }
 
         public int Port
         {
@@ -175,6 +211,8 @@ namespace revit_mcp_plugin.Core
             TcpClient tcpClient = (TcpClient)clientObj;
             NetworkStream stream = tcpClient.GetStream();
 
+            Interlocked.Increment(ref _activeClients);
+
             try
             {
                 byte[] buffer = new byte[8192];
@@ -204,6 +242,8 @@ namespace revit_mcp_plugin.Core
                     }
 
                     string message = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                    Interlocked.Increment(ref _requestCount);
+                    _lastActivityUtc = DateTime.UtcNow;
                     System.Diagnostics.Trace.WriteLine($"收到消息: {message}\nReceived message: {message}");
 
                     string response = ProcessJsonRPCRequest(message);
@@ -220,6 +260,7 @@ namespace revit_mcp_plugin.Core
             }
             finally
             {
+                Interlocked.Decrement(ref _activeClients);
                 tcpClient.Close();
             }
         }
